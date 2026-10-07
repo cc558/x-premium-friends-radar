@@ -1,0 +1,29 @@
+:root { color-scheme:light dark; --bg:#fff; --text:#0f1419; --muted:#536471; --line:#e6ecf0; --subtle:#f7f9f9; --blue:#1d9bf0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,"PingFang SC",sans-serif; }
+* { box-sizing:border-box; }
+body { margin:0; width:360px; background:var(--bg); color:var(--text); font-size:14px; }
+main { padding:22px; }
+header { display:flex; gap:12px; align-items:center; margin-bottom:24px; }
+h1 { margin:0; font-size:21px; line-height:28px; font-weight:800; }
+header p { margin:2px 0 0; font-size:12px; color:var(--muted); }
+.toggle-row { display:flex; justify-content:space-between; gap:14px; align-items:center; cursor:pointer; margin-bottom:22px; }
+strong { display:block; line-height:22px; font-size:14px; }
+small { display:block; margin-top:3px; font-size:11px; line-height:17px; color:var(--muted); }
+input[type="checkbox"] { appearance:none; width:38px; height:22px; border-radius:99px; background:var(--muted); flex-shrink:0; margin:0; cursor:pointer; position:relative; }
+input[type="checkbox"]::after { content:""; position:absolute; width:16px; height:16px; background:#fff; border-radius:50%; top:3px; left:3px; transition:transform .15s; }
+input[type="checkbox"]:checked { background:var(--blue); }
+input[type="checkbox"]:checked::after { transform:translateX(16px); }
+.quantity label { font-weight:700; display:block; margin-bottom:9px; }
+input[type="number"] { background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:10px; font:inherit; font-weight:600; width:100%; padding:11px 12px; }
+.quantity p { margin:8px 0 18px; color:var(--muted); line-height:18px; font-size:11px; }
+button { background:var(--blue); border:0; border-radius:99px; color:#fff; width:100%; padding:11px 16px; font:inherit; font-weight:700; cursor:pointer; }
+button:hover { background:#1a8cd8; }
+button:disabled { opacity:.55; cursor:wait; }
+input:focus-visible,button:focus-visible { outline:2px solid var(--blue); outline-offset:3px; }
+#feedback { margin:8px 0 0; min-height:18px; font-size:12px; line-height:18px; color:var(--blue); }
+#feedback[data-error="true"] { color:#e74c3c; }
+.current { margin-top:10px; padding:13px 14px; background:var(--subtle); border-radius:12px; }
+.caption { display:block; font-size:11px; color:var(--muted); }
+.current p { margin:5px 0 0; font-size:12px; line-height:19px; overflow-wrap:anywhere; }
+.note { margin:15px 0 0; font-size:11px; line-height:18px; color:var(--muted); }
+@media(prefers-color-scheme:dark) { :root { --bg:#15202b; --text:#e7e9ea; --muted:#8b98a5; --line:#38444d; --subtle:#1c2938; } }
+@media(prefers-reduced-motion:reduce) { input[type="checkbox"]::after { transition:none; } }

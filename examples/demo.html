@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>推荐蓝朋友 · 本地界面预览</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#000;color:#e7e9ea;font:15px -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif}main{max-width:600px;margin:0 auto;border-left:1px solid #2f3336;border-right:1px solid #2f3336;min-height:100vh}header{padding:16px;border-bottom:1px solid #2f3336;display:flex;align-items:center;justify-content:space-between}h1{font-size:19px;margin:0}button{border:1px solid #536471;background:transparent;color:inherit;border-radius:30px;padding:7px 14px;cursor:pointer}.banner{height:150px;background:linear-gradient(130deg,#06315b,#162b38 60%,#10181f)}.profile{padding:0 16px 18px}.portrait{margin-top:-36px;position:relative;width:78px;height:78px;border:4px solid #000;border-radius:50%;display:grid;place-items:center;background:#1d9bf0;font-size:30px}.name{font-size:21px;font-weight:800;margin:14px 0 4px}.blue{color:#1d9bf0}.muted{color:#71767b;font-size:14px}.bio{line-height:1.7;margin:14px 0}.counts{display:flex;gap:20px}.counts a{color:#e7e9ea;text-decoration:none}.tabs{display:flex;justify-content:space-around;padding:16px;border-bottom:1px solid #2f3336}.tabs span:first-child{font-weight:700;color:#1d9bf0}.notice{padding:16px;color:#71767b;font-size:12px;line-height:1.8}.light{background:#fff;color:#0f1419}.light main,.light header,.light .tabs{border-color:#eff3f4}.light .portrait{border-color:#fff}.light .counts a{color:#0f1419}
+</style>
+<main data-testid="primaryColumn">
+<header><h1>主页预览</h1><button id="theme" type="button">切换主题</button></header>
+<div class="banner"></div>
+<div class="profile">
+<div class="portrait">R</div>
+<div data-testid="UserName"><div class="name">Radar Demo <span class="blue">✓</span></div><span class="muted">@radar_demo</span></div>
+<p class="bio">在你正在浏览的主页，发现新的蓝朋友。</p>
+<div data-testid="UserProfileHeader_Items" class="muted">界面预览 · 全部为虚构示例数据</div>
+<p class="counts"><a href="https://x.com/radar_demo/following">438 <span class="muted">正在关注</span></a><a href="https://x.com/radar_demo/verified_followers">920 <span class="muted">关注者</span></a></p>
+</div>
+<div class="tabs"><span>帖子</span><span>回复</span><span>媒体</span></div>
+<p class="notice">这只是推荐区块的本地外观预览。安装扩展后，结果来自你已登录的 X 认证关注者列表。</p>
+</main>
+<script src="../extension/view.js"></script>
+<script src="demo.js"></script>
+</html>

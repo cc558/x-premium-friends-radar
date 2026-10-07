@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>推荐蓝朋友</title>
+  <link rel="stylesheet" href="popup.css">
+  <script src="popup.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <img src="icons/icon.svg" width="40" height="40" alt="">
+      <div><h1>推荐蓝朋友</h1><p>X 认证关注者雷达</p></div>
+    </header>
+    <form id="settings-form">
+      <label class="toggle-row" for="enabled">
+        <span><strong>自动推荐</strong><small>浏览蓝标 Premium 主页时开始扫描</small></span>
+        <input id="enabled" name="enabled" type="checkbox" role="switch" checked>
+      </label>
+      <div class="quantity">
+        <label for="max-results">每次推荐人数</label>
+        <input id="max-results" name="maxResults" type="number" min="1" max="20" step="1" value="20" required inputmode="numeric" aria-describedby="quantity-help">
+        <p id="quantity-help">1–20 人，默认 20 人。找到目标人数后停止；列表不足时显示已有结果。</p>
+      </div>
+      <button id="save" type="submit" disabled>保存设置</button>
+      <p id="feedback" role="status" aria-live="polite"></p>
+    </form>
+    <section class="current" aria-label="当前页面状态">
+      <span class="caption">当前页面</span>
+      <p id="active-state">正在读取…</p>
+    </section>
+    <p class="note">筛选：正在关注数 &gt; 关注者数的 80%。<br>使用当前 Chrome 的 X 登录状态，扫描时会打开一个后台标签页。</p>
+  </main>
+</body>
+</html>

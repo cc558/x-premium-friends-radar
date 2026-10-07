@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "推荐蓝朋友 · X Friends Radar",
+  "version": "0.1.0",
+  "description": "浏览 X 蓝标主页时，在认证关注者中寻找正在关注数大于关注者数 80% 的朋友。",
+  "minimum_chrome_version": "120",
+  "permissions": ["storage", "alarms"],
+  "icons": {"16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png"},
+  "host_permissions": ["https://x.com/*", "https://twitter.com/*"],
+  "background": {"service_worker": "background.js", "type": "module"},
+  "action": {"default_title": "推荐蓝朋友", "default_popup": "popup.html", "default_icon": {"16": "icons/icon16.png", "32": "icons/icon32.png"}},
+  "content_scripts": [
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["shared/core-main.js", "bridge.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["shared/core.js", "view.js", "scanner.js", "content.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    }
+  ]
+}
