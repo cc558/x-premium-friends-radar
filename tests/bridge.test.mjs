@@ -89,9 +89,21 @@ test("only the four allowed X GraphQL operations are observed", async () => {
   await settle();
   assert.equal(state.posts.length, 1);
   assert.deepEqual(state.posts[0].event, {
-    source: "blue-friends-radar", type: "VERIFIED_PAGE", page: { users: [{ id: "123", handle: "friend123", name: "好友123", avatar: "https://pbs.twimg.com/avatar.jpg", isBlueVerified: true, followers: 100, following: 90 }], nextCursor: null, exhausted: true, hasTimeline: true, error: null },
+    source: "blue-friends-radar", type: "VERIFIED_PAGE", page: { users: [{ id: "123", handle: "friend123", name: "好友123", avatar: "https://pbs.twimg.com/avatar.jpg", isBlueVerified: true, isFollowing: false, followers: 100, following: 90 }], nextCursor: null, exhausted: true, hasTimeline: true, error: null },
     targetId: "123", requestCursor: "cursor-1", handle: "owner", status: 200,
   });
+});
+
+test("verified-page observations and replay retain the viewer follow relationship", async () => {
+  const payload = plain(verified);
+  const followed = payload.data.user.result.timeline_v2.timeline.instructions[0].entries[0].content.itemContent.user_results.result;
+  followed.relationship_perspectives = { following: true, followed_by: false };
+  const state = runtime({ payload });
+  state.context.fetch(graphqlURL("BlueVerifiedFollowers", { userId: "123" }));
+  await settle();
+  assert.equal(state.posts[0].event.page.users[0].isFollowing, true);
+  state.ready();
+  assert.equal(state.posts[1].event.page.users[0].isFollowing, true);
 });
 
 test("same-origin controller readiness replays buffered events and ignores spoofed origins", async () => {

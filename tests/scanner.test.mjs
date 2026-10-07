@@ -64,6 +64,17 @@ test('scrolls after accepted data and stops all work when the worker says contin
   assert.equal(api.state.scrolls.length, 1);
 });
 
+test('forwards known and unknown viewer follow status with scan-page data', async () => {
+  const api = scanner();
+  const users = [
+    {id: '1', handle: 'followed', isFollowing: true},
+    {id: '2', handle: 'notfollowed', isFollowing: false},
+    {id: '3', handle: 'unknown'},
+  ];
+  await api.accept({ page: {...api.valid.page, users} });
+  assert.deepEqual(api.state.messages[0].page.users, users);
+});
+
 test('queued pages do not leak requests after an earlier page completes the scan', async () => {
   const api = scanner();
   let resolve;

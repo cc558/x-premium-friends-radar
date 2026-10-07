@@ -2,6 +2,7 @@
   'use strict';
   const form = document.querySelector('#settings-form');
   const enabled = document.querySelector('#enabled');
+  const hideFollowedUsers = document.querySelector('#hide-followed-users');
   const maxResults = document.querySelector('#max-results');
   const save = document.querySelector('#save');
   const feedback = document.querySelector('#feedback');
@@ -20,6 +21,7 @@
 
   function showSettings(settings) {
     enabled.checked = settings?.enabled !== false;
+    hideFollowedUsers.checked = settings?.hideFollowedUsers === true;
     const value = settings?.maxResults;
     maxResults.value = Number.isInteger(value) && value >= 1 && value <= 20 ? String(value) : '20';
   }
@@ -50,7 +52,7 @@
     }
     save.disabled = true;
     try {
-      const response = await send({ type:'SET_SETTINGS', settings:{ enabled:enabled.checked, maxResults:amount } });
+      const response = await send({ type:'SET_SETTINGS', settings:{ enabled:enabled.checked, hideFollowedUsers:hideFollowedUsers.checked, maxResults:amount } });
       showSettings(response.settings);
       report('设置已保存。');
       try { showState((await send({ type:'GET_ACTIVE_STATE' })).state); } catch { /* Settings were saved successfully. */ }

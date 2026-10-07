@@ -124,6 +124,99 @@ test('deduplicates pagination and skips missing counts and the exact 80% boundar
   assert.deepEqual(completed.results.map((candidate) => candidate.id), ['10', '13']);
 });
 
+test('keeps strict viewer follow flags in recommendations, notifications, and worker recovery', async () => {
+  const api = worker();
+  const {job} = await api.begin();
+  const users = [user(10, {isFollowing: true}), user(11, {isFollowing: false}), user(12), user(13, {isFollowing: 'true'})];
+  await api.page(job, users, {page: {users, hasTimeline: true, exhausted: true, nextCursor: null}});
+  const expected = [true, false, false, false];
+  assert.deepEqual(api.jobs()[0].results.map(candidate => candidate.isFollowing), expected);
+  assert.deepEqual(api.shared.notifications.at(-1).message.state.results.map(candidate => candidate.isFollowing), expected);
+  const restored = worker(api.shared);
+  await flush();
+  const reply = await restored.message({type: 'GET_ACTIVE_STATE'}, 1, {url: 'chrome-extension://radar-extension/popup.html'});
+  assert.deepEqual(reply.state.results.map(candidate => candidate.isFollowing), expected);
+  assert.deepEqual(restored.jobs()[0].results.map(candidate => candidate.isFollowing), expected);
+});
+
+test('old cached results with missing or invalid viewer follow flags never become followed', async () => {
+  const api = worker();
+  const {job} = await api.begin();
+  const users = [user(10), user(11), user(12, {isFollowing: true})];
+  await api.page(job, users, {page: {users, hasTimeline: true, exhausted: true, nextCursor: null}});
+  delete api.shared.session.radarState.jobs[0].results[0].isFollowing;
+  api.shared.session.radarState.jobs[0].results[1].isFollowing = 'true';
+  const restored = worker(api.shared);
+  await flush();
+  assert.deepEqual(restored.jobs()[0].results.map(candidate => candidate.isFollowing), [false, false, true]);
+  assert.equal(restored.jobs()[0].hideFollowedUsers, false);
+});
+
+test('hiding followed accounts fills its result quota across pages and keeps unknown relationships', async () => {
+  const api = worker(memory({enabled: true, maxResults: 3, hideFollowedUsers: true}));
+  const {job, response} = await api.begin();
+  assert.equal(job.hideFollowedUsers, true);
+  assert.equal(response.state.hideFollowedUsers, true);
+  const first = await api.page(job, [user(10, {isFollowing: true}), user(11, {isFollowing: false}), user(12, {isFollowing: true})]);
+  assert.equal(first.continue, true);
+  assert.deepEqual(api.jobs()[0].results.map(candidate => candidate.id), ['11']);
+  assert.equal(api.jobs()[0].scanned, 3);
+  const users = [user(10, {isFollowing: true}), user(13), user(14, {isFollowing: 'true'}), user(15, {isFollowing: false})];
+  const completed = await api.page(job, users, {requestCursor: 'cursor-1', page: {users, hasTimeline: true, exhausted: false, nextCursor: 'cursor-2'}});
+  assert.equal(completed.continue, false);
+  assert.equal(api.jobs()[0].reason, 'target');
+  assert.equal(api.jobs()[0].pages, 2);
+  assert.equal(api.jobs()[0].scanned, 5);
+  assert.deepEqual(api.jobs()[0].results.map(candidate => candidate.id), ['11', '13', '14']);
+  assert.deepEqual(api.shared.removed, [job.scanTabId]);
+});
+
+test('worker recovery keeps the job hide-followed snapshot and continues filling its quota', async () => {
+  const original = worker(memory({enabled: true, maxResults: 2, hideFollowedUsers: true}));
+  const {job} = await original.begin();
+  await original.page(job, [user(10, {isFollowing: true}), user(11, {isFollowing: false})]);
+  original.shared.local.settings.hideFollowedUsers = false;
+  const restored = worker(original.shared);
+  await flush();
+  assert.equal(restored.jobs()[0].hideFollowedUsers, true);
+  assert.deepEqual(restored.jobs()[0].results.map(candidate => candidate.id), ['11']);
+  const users = [user(12, {isFollowing: true}), user(13)];
+  await restored.page(job, users, {requestCursor: 'cursor-1', page: {users, hasTimeline: true, exhausted: true, nextCursor: null}});
+  assert.deepEqual(restored.jobs()[0].results.map(candidate => candidate.id), ['11', '13']);
+  assert.equal(restored.jobs()[0].status, 'complete');
+  assert.equal(restored.shared.created.length, 1);
+  const state = await restored.message({type: 'GET_ACTIVE_STATE'}, 1, {url: 'chrome-extension://radar-extension/popup.html'});
+  assert.equal(state.state.hideFollowedUsers, true);
+});
+
+test('restored hide-followed caches remove explicit followed results without inferring unknowns', async () => {
+  const original = worker();
+  const {job} = await original.begin();
+  const users = [user(10, {isFollowing: true}), user(11, {isFollowing: false}), user(12)];
+  await original.page(job, users, {page: {users, hasTimeline: true, exhausted: true, nextCursor: null}});
+  original.shared.session.radarState.jobs[0].hideFollowedUsers = true;
+  const restored = worker(original.shared);
+  await flush();
+  assert.deepEqual(restored.jobs()[0].results.map(candidate => candidate.id), ['11', '12']);
+  assert.equal(restored.jobs()[0].hideFollowedUsers, true);
+});
+
+test('changing hide-followed settings stops the current scan and force-start uses the new preference', async () => {
+  const api = worker();
+  const {job} = await api.begin();
+  await api.page(job, [user(10, {isFollowing: true})]);
+  const prefs = {enabled: true, maxResults: 2, hideFollowedUsers: true};
+  await api.message({type: 'SET_SETTINGS', settings: prefs}, 1, {url: 'chrome-extension://radar-extension/popup.html'});
+  assert.equal(api.jobs()[0].status, 'stopped');
+  assert.equal(api.jobs()[0].reason, 'settings');
+  assert.deepEqual(api.shared.removed, [job.scanTabId]);
+  const restarted = await api.message({type: 'START_SCAN', profile: profile('alice', '1'), force: true}, 1);
+  assert.equal(restarted.state.hideFollowedUsers, true);
+  assert.equal(restarted.state.maxResults, 2);
+  assert.equal(api.jobs()[0].results.length, 0);
+  assert.equal(api.shared.created.length, 2);
+});
+
 test('rejects scan pages from another tab, job or target without changing results', async () => {
   const api = worker();
   const {job} = await api.begin();
@@ -317,7 +410,7 @@ test('scanner navigation without URL visibility stops without closing the naviga
 test('only the exact extension popup may save settings, including when opened in a tab', async () => {
   const api = worker();
   api.addOwner(1, 'alice');
-  const preferences = {enabled: true, maxResults: 7};
+  const preferences = {enabled: true, maxResults: 7, hideFollowedUsers: false};
   const trusted = await api.message({type: 'SET_SETTINGS', settings: preferences}, 1,
     {url: 'chrome-extension://radar-extension/popup.html?view=settings#target'});
   assert.equal(trusted.ok, true);

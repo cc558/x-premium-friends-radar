@@ -18,6 +18,10 @@
         <span><strong>自动推荐</strong><small>浏览蓝标 Premium 主页时开始扫描</small></span>
         <input id="enabled" name="enabled" type="checkbox" role="switch" checked>
       </label>
+      <label class="toggle-row" for="hide-followed-users">
+        <span><strong>隐藏已关注用户</strong><small>跳过已关注的账号，继续寻找其他人</small></span>
+        <input id="hide-followed-users" name="hideFollowedUsers" type="checkbox" role="switch">
+      </label>
       <div class="quantity">
         <label for="max-results">每次推荐人数</label>
         <input id="max-results" name="maxResults" type="number" min="1" max="20" step="1" value="20" required inputmode="numeric" aria-describedby="quantity-help">

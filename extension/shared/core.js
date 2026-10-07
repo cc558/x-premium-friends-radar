@@ -2,7 +2,7 @@
 (() => {
   "use strict";
 
-  const DEFAULT_SETTINGS = Object.freeze({ enabled: true, maxResults: 20 });
+  const DEFAULT_SETTINGS = Object.freeze({ enabled: true, maxResults: 20, hideFollowedUsers: false });
   const X_HOSTS = new Set(["x.com", "www.x.com", "twitter.com", "www.twitter.com"]);
   const RESERVED_HANDLES = new Set([
     "home", "explore", "i", "settings", "search", "notifications", "messages",
@@ -17,6 +17,7 @@
       : NaN;
     return {
       enabled: typeof source.enabled === "boolean" ? source.enabled : DEFAULT_SETTINGS.enabled,
+      hideFollowedUsers: source.hideFollowedUsers === true,
       maxResults: Number.isFinite(requested)
         ? Math.max(1, Math.min(20, Math.trunc(requested)))
         : DEFAULT_SETTINGS.maxResults,
@@ -85,6 +86,7 @@
       name: safeName(raw.name, handle),
       avatar: safeAvatar(raw.avatar),
       isBlueVerified: raw.isBlueVerified === true,
+      isFollowing: raw.isFollowing === true,
       followers: count(raw.followers),
       following: count(raw.following),
     };
@@ -109,6 +111,11 @@
       name: safeName(user.core?.name ?? user.legacy?.name, handle),
       avatar: safeAvatar(user.avatar?.image_url ?? user.legacy?.profile_image_url_https),
       isBlueVerified: user.is_blue_verified === true,
+      // X separates the viewer's follow relationship from following counts.
+      // An explicit modern false overrides an older positive legacy value.
+      isFollowing: typeof user.relationship_perspectives?.following === "boolean"
+        ? user.relationship_perspectives.following
+        : user.legacy?.following === true,
       followers: firstCount(user.relationship_counts?.followers, user.legacy?.followers_count, user.public_metrics?.followers_count),
       following: firstCount(user.relationship_counts?.following, user.legacy?.friends_count, user.public_metrics?.following_count),
     };

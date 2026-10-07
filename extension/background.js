@@ -9,9 +9,13 @@ const ready = chrome.storage.session.get(SESSION_KEY).then((saved) => {
   if (saved[SESSION_KEY]?.jobs && saved[SESSION_KEY]?.visits) {
     data = saved[SESSION_KEY];
     for (const job of data.jobs) {
-      job.maxResults = Core.normalizeSettings({maxResults: job.maxResults}).maxResults;
-      job.results = Array.isArray(job.results) ? job.results.slice(0, job.maxResults) : [];
-      if (job.status === 'complete' && job.reason === 'target') job.message = `已找到 ${job.maxResults} 位朋友。`;
+      const prefs = Core.normalizeSettings({maxResults: job.maxResults, hideFollowedUsers: job.hideFollowedUsers});
+      job.maxResults = prefs.maxResults;
+      job.hideFollowedUsers = prefs.hideFollowedUsers;
+      job.results = Array.isArray(job.results)
+        ? job.results.map((user) => Core.sanitizeUser(user)).filter((user) => user && (!job.hideFollowedUsers || !user.isFollowing)).slice(0, job.maxResults)
+        : [];
+      if (job.status === 'complete' && job.reason === 'target') job.message = `已找到 ${job.results.length} 位朋友。`;
     }
   }
 });
@@ -28,8 +32,8 @@ const scanJob = (tabId) => data.jobs.find((job) => active(job) && job.scanTabId 
 
 function state(job) {
   if (!job) return null;
-  const {handle, status, reason, message, results, scanned, skipped, maxResults, updatedAt} = job;
-  return {handle, status, reason, message, results, scanned, skipped, maxResults, updatedAt};
+  const {handle, status, reason, message, results, scanned, skipped, maxResults, hideFollowedUsers, updatedAt} = job;
+  return {handle, status, reason, message, results, scanned, skipped, maxResults, hideFollowedUsers, updatedAt};
 }
 async function notify(job) {
   job.updatedAt = Date.now();
@@ -118,7 +122,7 @@ async function start(profile, tabId, force) {
   data.jobs = data.jobs.filter((job) => job.ownerTabId !== tabId);
   const job = {
     id: crypto.randomUUID(), ownerTabId: tabId, scanTabId: null,
-    handle: user.handle, profileId: user.id, maxResults: prefs.maxResults,
+    handle: user.handle, profileId: user.id, maxResults: prefs.maxResults, hideFollowedUsers: prefs.hideFollowedUsers,
     status: 'queued', reason: null, message: '正在等待扫描…',
     results: [], scanned: 0, skipped: 0, pages: 0,
     seen: [], pageKeys: [], lastCursor: null, nonAdvancing: 0,
@@ -169,6 +173,7 @@ async function acceptPage(message, sender) {
     seen.add(identity);
     job.scanned += 1;
     if (user.followers === null || user.following === null) job.skipped += 1;
+    if (job.hideFollowedUsers && user.isFollowing === true) continue;
     if (Core.matches(user)) job.results.push(user);
   }
   job.seen = [...seen];

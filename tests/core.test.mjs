@@ -24,14 +24,22 @@ const cursor = value => ({ entryId: "cursor-bottom-1", content: { __typename: "T
 const pagePayload = instructions => ({ data: { user: { result: { timeline_v2: { timeline: { instructions } } } } } });
 
 test("settings enforce a bounded configurable target while keeping defaults", () => {
-  assert.deepEqual(plain(core.normalizeSettings()), { enabled: true, maxResults: 20 });
-  assert.deepEqual(plain(core.normalizeSettings({ enabled: false, maxResults: 200 })), { enabled: false, maxResults: 20 });
+  assert.deepEqual(plain(core.normalizeSettings()), { enabled: true, maxResults: 20, hideFollowedUsers: false });
+  assert.deepEqual(plain(core.normalizeSettings({ enabled: false, maxResults: 200 })), { enabled: false, maxResults: 20, hideFollowedUsers: false });
   assert.equal(core.normalizeSettings({ maxResults: -3 }).maxResults, 1);
   assert.equal(core.normalizeSettings({ maxResults: 25.9 }).maxResults, 20);
   assert.equal(core.normalizeSettings({ maxResults: 15.9 }).maxResults, 15);
   assert.equal(core.normalizeSettings({ maxResults: "30" }).maxResults, 20);
   assert.equal(core.normalizeSettings({ maxResults: "10" }).maxResults, 10);
   for (const maxResults of [null, "", true, Infinity, "many"]) assert.equal(core.normalizeSettings({ maxResults }).maxResults, 20);
+});
+
+test("hide-followed preference defaults off and accepts only boolean true", () => {
+  assert.equal(core.DEFAULT_SETTINGS.hideFollowedUsers, false);
+  assert.equal(core.normalizeSettings({ hideFollowedUsers: true }).hideFollowedUsers, true);
+  for (const hideFollowedUsers of [undefined, null, false, "true", "false", 1, 0, {}, []]) {
+    assert.equal(core.normalizeSettings({ hideFollowedUsers }).hideFollowedUsers, false);
+  }
 });
 
 test("profile matching excludes navigation, foreign hosts, and other profile sections", () => {
@@ -44,7 +52,7 @@ test("profile matching excludes navigation, foreign hosts, and other profile sec
 
 test("legacy and split user schemas preserve exact counts and strict Premium state", () => {
   const old = core.normalizeUser(legacyUser());
-  assert.deepEqual(plain(old), { id: "123", handle: "good_friend", name: "好友", avatar: "https://pbs.twimg.com/profile_images/123/avatar.jpg", isBlueVerified: true, followers: 100, following: 81 });
+  assert.deepEqual(plain(old), { id: "123", handle: "good_friend", name: "好友", avatar: "https://pbs.twimg.com/profile_images/123/avatar.jpg", isBlueVerified: true, isFollowing: false, followers: 100, following: 81 });
   const modern = core.normalizeUser({ __typename: "UserWithVisibilityResults", user: {
     rest_id: "456", core: { screen_name: "New_Friend", name: "新的好友" },
     avatar: { image_url: "https://pbs.twimg.com/profile_images/456/avatar.png" },
@@ -60,6 +68,33 @@ test("legacy and split user schemas preserve exact counts and strict Premium sta
   const metrics = core.normalizeUser({ rest_id: "7", core: { screen_name: "Metrics" }, public_metrics: { followers_count: 4, following_count: 5 } });
   assert.equal(metrics.followers, 4);
   assert.equal(metrics.following, 5);
+});
+
+test("viewer following uses strict relationship booleans across both X user schemas", () => {
+  const normalize = overrides => core.normalizeUser(legacyUser(overrides));
+  assert.equal(normalize({ relationship_perspectives: { following: true } }).isFollowing, true);
+  assert.equal(normalize({ legacy: { screen_name: "Legacy", following: true } }).isFollowing, true);
+  assert.equal(normalize({ legacy: { screen_name: "Legacy", following: false } }).isFollowing, false);
+  assert.equal(normalize({ relationship_perspectives: { following: false }, legacy: { screen_name: "Conflict", following: true } }).isFollowing, false);
+  assert.equal(normalize({ relationship_perspectives: { following: true }, legacy: { screen_name: "Conflict", following: false } }).isFollowing, true);
+  assert.equal(normalize({ relationship_perspectives: { following: null }, legacy: { screen_name: "Fallback", following: true } }).isFollowing, true);
+  for (const value of [undefined, null, "true", "false", 1, 0, {}, []]) {
+    assert.equal(normalize({ relationship_perspectives: { following: value }, legacy: { screen_name: "Unknown", following: value } }).isFollowing, false);
+  }
+  assert.equal(normalize({ relationship_perspectives: { followed_by: true }, legacy: { screen_name: "Reverse", followed_by: true, follow_request_sent: true }, relationship_counts: { followers: 100, following: 900 } }).isFollowing, false);
+  const wrapped = core.normalizeUser({ __typename: "UserWithVisibilityResults", user: { core: { screen_name: "Wrapped" }, relationship_perspectives: { following: true } } });
+  assert.equal(wrapped.isFollowing, true);
+});
+
+test("normalized follow relationship survives sanitization without coercing unknown values", () => {
+  const followed = core.normalizeUser(legacyUser({ relationship_perspectives: { following: true } }));
+  assert.equal(core.sanitizeUser(followed).isFollowing, true);
+  assert.equal(core.matches(followed), true, "Follow status does not change the requested ratio filter.");
+  for (const isFollowing of [undefined, null, "true", 1, false]) {
+    assert.equal(core.sanitizeUser({ ...followed, isFollowing }).isFollowing, false);
+  }
+  const page = core.parseVerifiedPage(pagePayload([{ type: "TimelineAddEntries", entries: [userEntry(legacyUser({ relationship_perspectives: { following: true } }))] }]));
+  assert.equal(page.users[0].isFollowing, true);
 });
 
 test("unknown or rounded counts never become matches; zero and the exact boundary are handled", () => {

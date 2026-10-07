@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "推荐蓝朋友 · X Friends Radar",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "浏览 X 蓝标主页时，在认证关注者中寻找正在关注数大于关注者数 80% 的朋友。",
   "minimum_chrome_version": "120",
   "permissions": ["storage", "alarms"],

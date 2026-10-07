@@ -11,11 +11,13 @@
     :host([data-theme="dark"]) { --bg:#000; --text:#e7e9ea; --muted:#71767b; --line:#2f3336; --hover:#101214; color-scheme:dark; }
     :host([data-theme="dim"]) { --bg:#15202b; --text:#f7f9f9; --muted:#8b98a5; --line:#38444d; --hover:#1c2938; color-scheme:dark; }
     * { box-sizing:border-box; }
+    [hidden] { display:none!important; }
     section { background:var(--bg); border:1px solid var(--line); border-radius:16px; overflow:hidden; }
-    header { padding:16px 16px 12px; display:flex; gap:10px; align-items:flex-start; justify-content:space-between; }
+    header { padding:16px 16px 12px; display:flex; flex-wrap:wrap; gap:10px; align-items:flex-start; justify-content:space-between; }
+    .title-block { flex:1; min-width:120px; }
     h2 { margin:0; font-size:20px; line-height:26px; font-weight:800; letter-spacing:-.3px; }
     .eyebrow { margin:5px 0 0; font-size:12px; line-height:18px; color:var(--muted); }
-    .actions { display:flex; gap:6px; flex-shrink:0; }
+    .actions,.scan-actions { display:flex; gap:6px; flex-shrink:0; }
     button { font:inherit; font-size:12px; line-height:18px; font-weight:700; color:var(--text); background:transparent; border:1px solid var(--line); border-radius:999px; padding:6px 11px; cursor:pointer; }
     button:hover { background:var(--hover); }
     button:focus-visible,a:focus-visible { outline:2px solid var(--blue); outline-offset:3px; }
@@ -32,10 +34,15 @@
     .info { min-width:0; }
     .name { display:block; font-size:14px; line-height:20px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .handle { display:block; font-size:12px; line-height:18px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .following-badge { display:inline-block; margin-top:3px; padding:1px 6px; border-radius:4px; background:var(--line); color:var(--text); font-size:11px; line-height:16px; font-weight:600; }
     .counts { display:block; margin-top:4px; color:var(--muted); font-size:11px; line-height:17px; }
     .ratio { display:inline-block; color:var(--blue); margin-top:2px; font-size:11px; line-height:17px; font-weight:600; }
     footer { padding:10px 16px; border-top:1px solid var(--line); font-size:11px; line-height:17px; color:var(--muted); }
+    :host([data-collapsed="true"]) { margin-top:8px; margin-bottom:12px; }
+    :host([data-collapsed="true"]) header { padding:8px 16px; align-items:center; }
+    :host([data-collapsed="true"]) h2 { font-size:16px; line-height:22px; }
     @media(max-width:480px) { :host { margin:12px 12px 16px; } .results { grid-template-columns:minmax(0,1fr); } h2 { font-size:18px; } header { padding:14px 12px 10px; } .status { padding:0 12px 12px; } }
+    @media(max-width:480px) { :host([data-collapsed="true"]) { margin:8px 12px 12px; } :host([data-collapsed="true"]) header { padding:6px 12px; } }
     @media(prefers-reduced-motion:reduce) { .progress > span { transition:none; } }
   `;
 
@@ -122,9 +129,11 @@
     const section = element('section');
     section.setAttribute('aria-label', '推荐蓝朋友');
     const header = element('header');
-    const titleBlock = element('div');
-    titleBlock.append(element('h2', '', '推荐蓝朋友'), element('p', 'eyebrow', '正在关注数 > 关注者数的 80%'));
+    const titleBlock = element('div', 'title-block');
+    const subtitle = element('p', 'eyebrow', '正在关注数 > 关注者数的 80%');
+    titleBlock.append(element('h2', '', '推荐蓝朋友'), subtitle);
     const actions = element('div', 'actions');
+    const scanActions = element('div', 'scan-actions');
     const retry = element('button', '', '刷新');
     retry.type = 'button';
     retry.setAttribute('aria-label', '重新扫描认证关注者');
@@ -132,8 +141,14 @@
     const cancel = element('button', '', '停止');
     cancel.type = 'button';
     cancel.addEventListener('click', () => onCancel());
-    actions.append(retry, cancel);
+    scanActions.append(retry, cancel);
+    const collapse = element('button', 'collapse-toggle', '收起');
+    collapse.type = 'button';
+    collapse.setAttribute('aria-controls', 'blue-friends-radar-body');
+    actions.append(scanActions, collapse);
     header.append(titleBlock, actions);
+    const body = element('div', 'body');
+    body.id = 'blue-friends-radar-body';
     const status = element('div', 'status');
     status.setAttribute('role','status');
     status.setAttribute('aria-live','polite');
@@ -145,10 +160,26 @@
     progress.append(bar);
     const results = element('ul','results');
     const footer = element('footer', '', '仅按公开数量筛选；推荐顺序与 X 返回的列表顺序一致。');
-    section.append(header, status, progress, results, footer);
+    body.append(status, progress, results, footer);
+    section.append(header, body);
     shadow.append(style, section);
     let current = { status:'checking', results:[], maxResults:20 };
     let mountedHandle = '';
+    let collapsed = false;
+
+    function updateCollapsed() {
+      host.dataset.collapsed = String(collapsed);
+      body.hidden = collapsed;
+      subtitle.hidden = collapsed;
+      scanActions.hidden = collapsed;
+      collapse.textContent = collapsed ? '展开' : '收起';
+      collapse.setAttribute('aria-expanded', String(!collapsed));
+      const label = collapsed ? '展开推荐蓝朋友区块' : '收起推荐蓝朋友区块';
+      collapse.setAttribute('aria-label', label);
+      collapse.title = label;
+    }
+    collapse.addEventListener('click', () => { collapsed = !collapsed; updateCollapsed(); });
+    updateCollapsed();
 
     function mount() {
       if (current.status === 'not-premium') {
@@ -175,6 +206,9 @@
       retry.textContent = state.status === 'error' || state.status === 'stopped' ? '重试' : '刷新';
       const valid = current.results.filter(user => user && HANDLE.test(user.handle || ''));
       const target = Number.isSafeInteger(state.maxResults) && state.maxResults > 0 ? Math.min(20,state.maxResults) : 20;
+      footer.textContent = state.hideFollowedUsers === true
+        ? '已隐藏已关注用户；推荐顺序与 X 返回的列表顺序一致。'
+        : '仅按公开数量筛选；推荐顺序与 X 返回的列表顺序一致。';
       status.replaceChildren();
       const summary = element('strong', '', `${valid.length} / ${target} 人`);
       const scanned = count(state.scanned);
@@ -210,6 +244,7 @@
         const name = element('span','name',label);
         name.title = label;
         info.append(name,element('span','handle',`@${user.handle}`));
+        if (user.isFollowing === true) info.append(element('span','following-badge','已关注'));
         const following = count(user.following);
         const followers = count(user.followers);
         if (following !== null && followers !== null) {

@@ -35,6 +35,9 @@ const listEntries = Array.from({ length: 25 }, (_, index) => ({
         rest_id: String(1000 + index), is_blue_verified: false,
         core: { screen_name: `friend${index + 1}`, name: `模拟好友 ${index + 1}` },
         relationship_counts: { followers: 100, following: 81 + index },
+        ...(index === 0 ? { relationship_perspectives: { following: true } } : {}),
+        ...(index === 1 ? { legacy: { following: false } } : {}),
+        ...(index === 9 ? { legacy: { following: true } } : {}),
       } },
     } },
   }));
@@ -202,13 +205,21 @@ try {
   assert.equal(job.results[0].handle, 'friend1');
   assert.equal(job.results[19].handle, 'friend20');
   assert.equal(job.results[0].isBlueVerified, false, 'List membership must only be filtered by the requested count ratio.');
+  assert.equal(job.results[0].isFollowing, true, 'Modern viewer relationship must survive the bridge and MV3 worker.');
+  assert.equal(job.results[1].isFollowing, false);
+  assert.equal(job.results[2].isFollowing, false, 'Unknown viewer relationship must never become a followed badge.');
+  assert.equal(job.results[9].isFollowing, true, 'Legacy viewer relationship must survive pagination, the bridge and MV3 worker.');
   await page.locator('#blue-friends-radar-panel').waitFor({ state: 'visible' });
   const cdp = await context.newCDPSession(page);
   const documentTree = await cdp.send('DOM.getDocument', { depth: -1, pierce: true });
   const panel = descendants(documentTree.root).find(node => attributes(node).id === 'blue-friends-radar-panel');
   assert.ok(panel?.shadowRoots?.length, 'The actual content-script panel must contain its closed shadow root.');
-  assert.equal(descendants(panel).filter(node => node.nodeName === 'A' && attributes(node).class === 'card').length, 20);
+  const cards = descendants(panel).filter(node => node.nodeName === 'A' && attributes(node).class === 'card');
+  assert.equal(cards.length, 20);
   assert.equal(descendants(panel).some(node => node.nodeName === '#text' && node.nodeValue === '推荐蓝朋友'), true);
+  const followedHandles = cards.filter(card => descendants(card).some(node => node.nodeName === '#text' && node.nodeValue === '已关注'))
+    .map(card => attributes(card).href);
+  assert.deepEqual(followedHandles, ['https://x.com/friend1', 'https://x.com/friend10'], 'Only explicit followed relationships receive the badge in the real closed-shadow panel.');
   await until(
     () => worker.evaluate(() => chrome.tabs.query({})),
     tabs => !tabs.some(tab => tab.url === 'https://x.com/demo/verified_followers'),
@@ -255,15 +266,37 @@ try {
     result => result.result.value === true,
     'The actual popup did not load its settings',
   );
-  await popupCommand('Runtime.evaluate', { expression: 'document.querySelector("#max-results").value="7";document.querySelector("#max-results").dispatchEvent(new Event("input",{bubbles:true}));document.querySelector("#save").click();', returnByValue: true });
+  const initiallyHidden = await popupCommand('Runtime.evaluate', { expression: 'document.querySelector("#hide-followed-users").checked', returnByValue: true });
+  assert.equal(initiallyHidden.result.value, false, 'Hiding followed users must be opt-in by default.');
+  await popupCommand('Runtime.evaluate', { expression: 'document.querySelector("#max-results").value="7";document.querySelector("#max-results").dispatchEvent(new Event("input",{bubbles:true}));document.querySelector("#hide-followed-users").checked=true;document.querySelector("#hide-followed-users").dispatchEvent(new Event("change",{bubbles:true}));document.querySelector("#save").click();', returnByValue: true });
   await until(
     () => popupCommand('Runtime.evaluate', { expression: 'document.querySelector("#feedback").textContent', returnByValue: true }),
     result => result.result.value === '设置已保存。',
     'The actual popup did not confirm saved settings',
   );
   const prefs = await worker.evaluate(() => chrome.storage.local.get('settings'));
-  assert.deepEqual(prefs.settings, { enabled: true, maxResults: 7 });
-  console.log(JSON.stringify({ ok: true, browser: context.browser()?.version(), extensionId, found: job.results.length, pages: job.pages, scannerTabClosed: true, savedMaxResults: prefs.settings.maxResults, screenshotPath }, null, 2));
+  assert.deepEqual(prefs.settings, { enabled: true, maxResults: 7, hideFollowedUsers: true });
+  const rescanned = await until(
+    () => worker.evaluate(() => chrome.storage.session.get('radarState')),
+    saved => saved.radarState?.jobs?.some(item => item.handle === 'demo' && item.maxResults === 7 && item.status === 'complete'),
+    'Saving the new hide-followed preference did not trigger a fresh scan',
+  );
+  const filteredJob = rescanned.radarState.jobs.find(item => item.handle === 'demo');
+  assert.equal(filteredJob.results.length, 7, 'Followed users must not consume the recommendation quota.');
+  assert.deepEqual(filteredJob.results.map(item => item.handle), ['friend2', 'friend3', 'friend4', 'friend5', 'friend6', 'friend7', 'friend8']);
+  assert.equal(filteredJob.results.every(item => item.isFollowing === false), true);
+  await until(
+    () => cdp.send('DOM.getDocument', { depth: -1, pierce: true }),
+    tree => {
+      const filteredPanel = descendants(tree.root).find(node => attributes(node).id === 'blue-friends-radar-panel');
+      if (!filteredPanel) return false;
+      const nodes = descendants(filteredPanel);
+      return nodes.filter(node => node.nodeName === 'A' && attributes(node).class === 'card').length === 7 &&
+        !nodes.some(node => node.nodeName === '#text' && node.nodeValue === '已关注');
+    },
+    'The real panel did not show the seven filtered recommendations without followed badges',
+  );
+  console.log(JSON.stringify({ ok: true, browser: context.browser()?.version(), extensionId, found: job.results.length, pages: job.pages, followedBadges: followedHandles.length, scannerTabClosed: true, savedMaxResults: prefs.settings.maxResults, hideFollowedUsers: prefs.settings.hideFollowedUsers, filteredResults: filteredJob.results.length, screenshotPath }, null, 2));
 } finally {
   await context?.close();
   if (fixtureServer) {
