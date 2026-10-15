@@ -152,53 +152,131 @@ test('old cached results with missing or invalid viewer follow flags never becom
   assert.equal(restored.jobs()[0].hideFollowedUsers, false);
 });
 
-test('hiding followed accounts fills its result quota across pages and keeps unknown relationships', async () => {
+test('hidden followed accounts consume the target quota within the same page', async () => {
   const api = worker(memory({enabled: true, maxResults: 3, hideFollowedUsers: true}));
   const {job, response} = await api.begin();
   assert.equal(job.hideFollowedUsers, true);
   assert.equal(response.state.hideFollowedUsers, true);
-  const first = await api.page(job, [user(10, {isFollowing: true}), user(11, {isFollowing: false}), user(12, {isFollowing: true})]);
+  assert.equal(job.matched, 0);
+  const completed = await api.page(job, [user(10, {isFollowing: true}), user(11, {isFollowing: false}),
+    user(12, {isFollowing: true}), user(13)]);
+  assert.equal(completed.continue, false);
+  assert.equal(api.jobs()[0].reason, 'target');
+  assert.equal(api.jobs()[0].matched, 3);
+  assert.equal(api.jobs()[0].scanned, 3);
+  assert.deepEqual(api.jobs()[0].results.map(candidate => candidate.id), ['11']);
+  assert.deepEqual(api.shared.notifications.at(-1).message.state.results.map(candidate => candidate.id), ['11']);
+  assert.deepEqual(api.shared.removed, [job.scanTabId]);
+});
+
+test('a quota consisting entirely of hidden followed accounts completes without extra recommendations', async () => {
+  const api = worker(memory({enabled: true, maxResults: 2, hideFollowedUsers: true}));
+  const {job} = await api.begin();
+  const response = await api.page(job, [user(10, {isFollowing: true}), user(11, {isFollowing: true}), user(12)]);
+  assert.equal(response.continue, false);
+  assert.equal(api.jobs()[0].status, 'complete');
+  assert.equal(api.jobs()[0].reason, 'target');
+  assert.equal(api.jobs()[0].matched, 2);
+  assert.equal(api.jobs()[0].scanned, 2);
+  assert.deepEqual(api.jobs()[0].results, []);
+  assert.deepEqual(api.shared.removed, [job.scanTabId]);
+});
+
+test('hidden matches consume the quota across pages while duplicates and ineligible accounts do not', async () => {
+  const api = worker(memory({enabled: true, maxResults: 4, hideFollowedUsers: true}));
+  const {job} = await api.begin();
+  const firstPage = [user(10, {isFollowing: true}), user(20, {isFollowing: true, following: 80}),
+    user(21, {isFollowing: true, followers: null}), user(11, {isFollowing: false})];
+  const first = await api.page(job, firstPage);
   assert.equal(first.continue, true);
   assert.deepEqual(api.jobs()[0].results.map(candidate => candidate.id), ['11']);
-  assert.equal(api.jobs()[0].scanned, 3);
-  const users = [user(10, {isFollowing: true}), user(13), user(14, {isFollowing: 'true'}), user(15, {isFollowing: false})];
+  assert.equal(api.jobs()[0].matched, 2);
+  assert.equal(api.jobs()[0].scanned, 4);
+  assert.equal(api.jobs()[0].skipped, 1);
+  assert.equal((await api.page(job, firstPage)).duplicate, true);
+  assert.equal(api.jobs()[0].matched, 2);
+  assert.equal(api.jobs()[0].pages, 1);
+  const users = [...firstPage, user(12), user(13, {isFollowing: 'true'}), user(14, {isFollowing: false})];
   const completed = await api.page(job, users, {requestCursor: 'cursor-1', page: {users, hasTimeline: true, exhausted: false, nextCursor: 'cursor-2'}});
   assert.equal(completed.continue, false);
   assert.equal(api.jobs()[0].reason, 'target');
   assert.equal(api.jobs()[0].pages, 2);
-  assert.equal(api.jobs()[0].scanned, 5);
-  assert.deepEqual(api.jobs()[0].results.map(candidate => candidate.id), ['11', '13', '14']);
+  assert.equal(api.jobs()[0].matched, 4);
+  assert.equal(api.jobs()[0].scanned, 6);
+  assert.deepEqual(api.jobs()[0].results.map(candidate => candidate.id), ['11', '12', '13']);
   assert.deepEqual(api.shared.removed, [job.scanTabId]);
 });
 
-test('worker recovery keeps the job hide-followed snapshot and continues filling its quota', async () => {
-  const original = worker(memory({enabled: true, maxResults: 2, hideFollowedUsers: true}));
+test('worker recovery keeps hidden matches in the quota and preserves the job hide-followed snapshot', async () => {
+  const original = worker(memory({enabled: true, maxResults: 4, hideFollowedUsers: true}));
   const {job} = await original.begin();
   await original.page(job, [user(10, {isFollowing: true}), user(11, {isFollowing: false})]);
   original.shared.local.settings.hideFollowedUsers = false;
   const restored = worker(original.shared);
   await flush();
   assert.equal(restored.jobs()[0].hideFollowedUsers, true);
+  assert.equal(restored.jobs()[0].matched, 2);
   assert.deepEqual(restored.jobs()[0].results.map(candidate => candidate.id), ['11']);
-  const users = [user(12, {isFollowing: true}), user(13)];
-  await restored.page(job, users, {requestCursor: 'cursor-1', page: {users, hasTimeline: true, exhausted: true, nextCursor: null}});
+  const users = [user(10, {isFollowing: true}), user(12, {isFollowing: true}), user(13), user(14)];
+  const response = await restored.page(job, users, {requestCursor: 'cursor-1', page: {users, hasTimeline: true, exhausted: false, nextCursor: 'cursor-2'}});
+  assert.equal(response.continue, false);
   assert.deepEqual(restored.jobs()[0].results.map(candidate => candidate.id), ['11', '13']);
   assert.equal(restored.jobs()[0].status, 'complete');
+  assert.equal(restored.jobs()[0].reason, 'target');
+  assert.equal(restored.jobs()[0].matched, 4);
+  assert.equal(restored.jobs()[0].scanned, 4);
   assert.equal(restored.shared.created.length, 1);
   const state = await restored.message({type: 'GET_ACTIVE_STATE'}, 1, {url: 'chrome-extension://radar-extension/popup.html'});
   assert.equal(state.state.hideFollowedUsers, true);
 });
 
-test('restored hide-followed caches remove explicit followed results without inferring unknowns', async () => {
+test('worker startup completes a persisted quota even when hidden accounts leave fewer visible results', async () => {
+  const original = worker(memory({enabled: true, maxResults: 2, hideFollowedUsers: true}));
+  const {job} = await original.begin();
+  const stored = original.shared.session.radarState.jobs[0];
+  Object.assign(stored, {matched: 2, scanned: 2, results: [user(11, {isFollowing: false})], seen: ['10', '11']});
+  const restored = worker(original.shared);
+  await flush();
+  assert.equal(restored.jobs()[0].status, 'complete');
+  assert.equal(restored.jobs()[0].reason, 'target');
+  assert.equal(restored.jobs()[0].matched, 2);
+  assert.deepEqual(restored.jobs()[0].results.map(candidate => candidate.id), ['11']);
+  assert.deepEqual(restored.shared.removed, [job.scanTabId]);
+  assert.equal(restored.shared.created.length, 1);
+});
+
+test('legacy hide-followed caches count sanitized results before removing explicit followed accounts', async () => {
   const original = worker();
   const {job} = await original.begin();
   const users = [user(10, {isFollowing: true}), user(11, {isFollowing: false}), user(12)];
   await original.page(job, users, {page: {users, hasTimeline: true, exhausted: true, nextCursor: null}});
   original.shared.session.radarState.jobs[0].hideFollowedUsers = true;
+  delete original.shared.session.radarState.jobs[0].matched;
   const restored = worker(original.shared);
   await flush();
   assert.deepEqual(restored.jobs()[0].results.map(candidate => candidate.id), ['11', '12']);
   assert.equal(restored.jobs()[0].hideFollowedUsers, true);
+  assert.equal(restored.jobs()[0].matched, 3);
+});
+
+test('legacy active caches retain the pre-filter count when continuing toward the target', async () => {
+  const original = worker(memory({enabled: true, maxResults: 3, hideFollowedUsers: false}));
+  const {job} = await original.begin();
+  await original.page(job, [user(10, {isFollowing: true}), user(11, {isFollowing: false})]);
+  const stored = original.shared.session.radarState.jobs[0];
+  delete stored.matched;
+  stored.hideFollowedUsers = true;
+  const restored = worker(original.shared);
+  await flush();
+  assert.equal(restored.jobs()[0].matched, 2);
+  assert.deepEqual(restored.jobs()[0].results.map(candidate => candidate.id), ['11']);
+  const users = [user(12, {isFollowing: true}), user(13)];
+  const response = await restored.page(job, users, {requestCursor: 'cursor-1', page: {users, hasTimeline: true, exhausted: false, nextCursor: 'cursor-2'}});
+  assert.equal(response.continue, false);
+  assert.equal(restored.jobs()[0].reason, 'target');
+  assert.equal(restored.jobs()[0].matched, 3);
+  assert.equal(restored.jobs()[0].scanned, 3);
+  assert.deepEqual(restored.jobs()[0].results.map(candidate => candidate.id), ['11']);
 });
 
 test('changing hide-followed settings stops the current scan and force-start uses the new preference', async () => {

@@ -52,7 +52,7 @@ test("profile matching excludes navigation, foreign hosts, and other profile sec
 
 test("legacy and split user schemas preserve exact counts and strict Premium state", () => {
   const old = core.normalizeUser(legacyUser());
-  assert.deepEqual(plain(old), { id: "123", handle: "good_friend", name: "好友", avatar: "https://pbs.twimg.com/profile_images/123/avatar.jpg", isBlueVerified: true, isFollowing: false, followers: 100, following: 81 });
+  assert.deepEqual(plain(old), { id: "123", handle: "good_friend", name: "好友", avatar: "https://pbs.twimg.com/profile_images/123/avatar.jpg", isBlueVerified: true, isFollowing: false, isFollowedBy: null, followers: 100, following: 81 });
   const modern = core.normalizeUser({ __typename: "UserWithVisibilityResults", user: {
     rest_id: "456", core: { screen_name: "New_Friend", name: "新的好友" },
     avatar: { image_url: "https://pbs.twimg.com/profile_images/456/avatar.png" },
@@ -95,6 +95,42 @@ test("normalized follow relationship survives sanitization without coercing unkn
   }
   const page = core.parseVerifiedPage(pagePayload([{ type: "TimelineAddEntries", entries: [userEntry(legacyUser({ relationship_perspectives: { following: true } }))] }]));
   assert.equal(page.users[0].isFollowing, true);
+});
+
+test("follows-you state requires explicit booleans and prioritizes the modern relationship", () => {
+  const normalize = (modern, legacy) => core.normalizeUser(legacyUser({
+    relationship_perspectives: { followed_by: modern },
+    legacy: { screen_name: "Friend", followed_by: legacy },
+  }));
+  for (const value of [true, false]) {
+    assert.equal(normalize(value, !value).isFollowedBy, value);
+    assert.equal(normalize(undefined, value).isFollowedBy, value);
+    assert.equal(normalize("false", value).isFollowedBy, value);
+    assert.equal(core.sanitizeUser(normalize(value, !value)).isFollowedBy, value);
+  }
+  for (const value of [undefined, null, "true", "false", 1, 0, {}, []]) {
+    assert.equal(normalize(value, value).isFollowedBy, null);
+    assert.equal(core.sanitizeUser({ handle: "Unknown", isFollowedBy: value }).isFollowedBy, null);
+  }
+  const reverseOnly = core.normalizeUser(legacyUser({ relationship_perspectives: { following: true }, legacy: { screen_name: "Friend", following: true } }));
+  assert.equal(reverseOnly.isFollowedBy, null, "Following the user is independent from being followed by them.");
+  const wrapped = core.normalizeUser({ __typename: "UserWithVisibilityResults", user: { core: { screen_name: "Wrapped" }, relationship_perspectives: { followed_by: false } } });
+  assert.equal(wrapped.isFollowedBy, false);
+});
+
+test("Following timeline parser retains all known relationship states and excludes extra fields", () => {
+  const raws = [true, false, undefined].map((followedBy, index) => legacyUser({
+    rest_id: String(index + 1), relationship_perspectives: { followed_by: followedBy, secret: "private-relationship" },
+    secret: "private-user",
+  }));
+  const page = core.parseFollowingPage(pagePayload([{ type: "TimelineAddEntries", entries: raws.map((raw, index) => userEntry(raw, `user-${index}`)) }]));
+  assert.deepEqual(plain(page.users.map(user => user.isFollowedBy)), [true, false, null]);
+  assert.equal(JSON.stringify(page).includes("private-"), false);
+  assert.equal(core.parseFollowingPage, core.parseVerifiedPage, "Both lists share the same strict user timeline boundary.");
+});
+
+test("MAIN-world data boundary stays synchronized with the isolated-world copy", () => {
+  assert.equal(readFileSync(new URL("../extension/shared/core-main.js", import.meta.url), "utf8"), readFileSync(new URL("../extension/shared/core.js", import.meta.url), "utf8"));
 });
 
 test("unknown or rounded counts never become matches; zero and the exact boundary are handled", () => {

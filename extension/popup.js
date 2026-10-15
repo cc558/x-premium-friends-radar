@@ -30,12 +30,15 @@
     if (!state) { active.textContent = '打开 X 用户主页后，推荐区块会出现在主页里。'; return; }
     const name = state.handle ? `@${state.handle}` : '这个账号';
     const found = Array.isArray(state.results) ? state.results.length : 0;
+    const matched = Number.isSafeInteger(state.matched) && state.matched >= 0 ? state.matched : found;
+    const hidden = state.hideFollowedUsers === true ? Math.max(0, matched - found) : 0;
+    const total = hidden ? `${matched} 人，展示 ${found} 人（已隐藏 ${hidden} 人）` : `${matched} 人`;
     const messages = {
       checking:`${name}：正在确认蓝标状态。`,
       queued:`${name}：等待扫描。`,
-      scanning:`${name}：扫描中，已找到 ${found} 人。`,
-      complete:`${name}：扫描完成，找到 ${found} 人。`,
-      stopped:`${name}：扫描停止，保留 ${found} 人。`,
+      scanning:`${name}：扫描中，已找到 ${total}。`,
+      complete:`${name}：扫描完成，找到 ${total}。`,
+      stopped:`${name}：扫描停止，已找到 ${total}。`,
       error:`${name}：扫描暂时失败，可在主页点击重试。`,
       'not-premium':`${name}：未检测到蓝标 Premium 状态。`
     };

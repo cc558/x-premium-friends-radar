@@ -87,6 +87,7 @@
       avatar: safeAvatar(raw.avatar),
       isBlueVerified: raw.isBlueVerified === true,
       isFollowing: raw.isFollowing === true,
+      isFollowedBy: typeof raw.isFollowedBy === "boolean" ? raw.isFollowedBy : null,
       followers: count(raw.followers),
       following: count(raw.following),
     };
@@ -116,6 +117,10 @@
       isFollowing: typeof user.relationship_perspectives?.following === "boolean"
         ? user.relationship_perspectives.following
         : user.legacy?.following === true,
+      // Absence is unknown: it cannot establish that this user does not follow the viewer.
+      isFollowedBy: typeof user.relationship_perspectives?.followed_by === "boolean"
+        ? user.relationship_perspectives.followed_by
+        : typeof user.legacy?.followed_by === "boolean" ? user.legacy.followed_by : null,
       followers: firstCount(user.relationship_counts?.followers, user.legacy?.followers_count, user.public_metrics?.followers_count),
       following: firstCount(user.relationship_counts?.following, user.legacy?.friends_count, user.public_metrics?.following_count),
     };
@@ -216,5 +221,6 @@
   globalThis.BlueFriendsCore = Object.freeze({
     DEFAULT_SETTINGS, normalizeSettings, normalizeHandle, profileHandle,
     normalizeUser, sanitizeUser, matches, parseProfile, parseVerifiedPage,
+    parseFollowingPage: parseVerifiedPage,
   });
 })();

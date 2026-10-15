@@ -79,6 +79,25 @@ const screenshot = name => join(tmpdir(),name);
   await page.evaluate(() => { document.body.style.backgroundColor = 'rgb(21,32,43)'; document.body.style.color = '#f7f9f9'; testView.render({ handle:'example',status:'complete',scanned:110,maxResults:20,results:[{ handle:'friend_one',name:'蓝朋友一号',followers:1000,following:801 }] }); });
   assert.equal(await page.locator('#blue-friends-radar-panel').getAttribute('data-theme'),'dim');
   await page.screenshot({ path:screenshot('bluefriends-panel-dark.png') });
+  await page.evaluate(() => testView.render({ handle:'example',status:'complete',scanned:2,matched:2,maxResults:2,hideFollowedUsers:true,
+    results:[{handle:'friend_two',name:'未关注的蓝朋友',followers:100,following:81,isFollowing:false}] }));
+  assert.equal(await panel.locator('.status strong').textContent(),'2 / 2 人');
+  assert.equal(await panel.locator('.card').count(),1,'A hidden match must not require a replacement card to complete the quota.');
+  assert.ok((await panel.locator('.status').textContent()).includes('展示 1 人 · 已隐藏 1 人'));
+  assert.equal(await panel.getByRole('progressbar').getAttribute('aria-valuenow'),'2');
+  assert.equal(await panel.locator('.progress > span').evaluate(bar => bar.style.width),'100%');
+  await page.evaluate(() => testView.render({handle:'example',status:'complete',scanned:2,matched:2,maxResults:2,hideFollowedUsers:true,results:[]}));
+  assert.equal(await panel.locator('.card').count(),0);
+  assert.equal(await panel.locator('.status strong').textContent(),'2 / 2 人');
+  assert.equal(await panel.getByRole('progressbar').getAttribute('aria-valuenow'),'2');
+  const allHiddenStatus = await panel.locator('.status').textContent();
+  assert.ok(allHiddenStatus.includes('展示 0 人 · 已隐藏 2 人'));
+  assert.ok(allHiddenStatus.includes('符合条件的账号均已关注，已全部隐藏。'));
+  assert.equal(allHiddenStatus.includes('暂未找到'),false,'An all-hidden result must not imply that no matching users were found.');
+  await page.evaluate(() => testView.render({handle:'example',status:'complete',scanned:1,maxResults:2,hideFollowedUsers:true,
+    results:[{handle:'friend_two',name:'兼容旧状态',followers:100,following:81}]}));
+  assert.equal(await panel.locator('.status strong').textContent(),'1 / 2 人','Older states without matched must fall back to the stored results count.');
+  assert.equal(await panel.getByRole('progressbar').getAttribute('aria-valuenow'),'1');
   await page.evaluate(() => testView.render({handle:'example',status:'not-premium'}));
   assert.equal(await page.locator('#blue-friends-radar-panel').isVisible(),false);
   await page.evaluate(() => testView.remove());
@@ -89,7 +108,9 @@ const screenshot = name => join(tmpdir(),name);
     globalThis.chrome = {runtime:{sendMessage:async message => {
       if (message.type === 'GET_SETTINGS') return {ok:true,settings:{enabled:true,maxResults:20,hideFollowedUsers:false}};
       if (message.type === 'SET_SETTINGS') { saved = message.settings; return {ok:true,settings:message.settings}; }
-      if (message.type === 'GET_ACTIVE_STATE') return {ok:true,state:{handle:'example',status:'scanning',results:[{}]}};
+      if (message.type === 'GET_ACTIVE_STATE') return {ok:true,state:saved?.hideFollowedUsers
+        ? {handle:'example',status:'complete',matched:7,hideFollowedUsers:true,results:Array.from({length:6},() => ({}))}
+        : {handle:'example',status:'scanning',results:[{}]}};
       return {ok:false};
     }}};
   });
@@ -97,6 +118,7 @@ const screenshot = name => join(tmpdir(),name);
   await popup.locator('#save').waitFor();
   await popup.waitForFunction(() => !document.querySelector('#save').disabled);
   assert.equal(await popup.locator('#hide-followed-users').isChecked(),false);
+  assert.equal(await popup.locator('#active-state').textContent(),'@example：扫描中，已找到 1 人。');
   await popup.locator('#max-results').fill('17');
   await popup.locator('#enabled').uncheck();
   await popup.locator('#hide-followed-users').check();
@@ -104,8 +126,8 @@ const screenshot = name => join(tmpdir(),name);
   await popup.waitForFunction(() => document.querySelector('#feedback').textContent === '设置已保存。');
   assert.deepEqual(await popup.evaluate(() => saved),{enabled:false,maxResults:17,hideFollowedUsers:true});
   assert.equal(await popup.locator('#hide-followed-users').isChecked(),true);
-  assert.equal(await popup.locator('#active-state').textContent(),'@example：扫描中，已找到 1 人。');
+  await popup.waitForFunction(() => document.querySelector('#active-state').textContent === '@example：扫描完成，找到 7 人，展示 6 人（已隐藏 1 人）。');
   await popup.screenshot({ path:screenshot('bluefriends-popup.png') });
-  console.log('UI mock checks passed: profile placement, idempotence, untrusted text/avatar, ratio edge, strict followed markers, compact collapse, collapse retained across updates, latest results on expand, stop, themes, hidden panel, removal, settings persistence.');
+  console.log('UI mock checks passed: profile placement, idempotence, untrusted text/avatar, ratio edge, strict followed markers, compact collapse, collapse retained across updates, latest results on expand, stop, themes, matched quota progress, all-hidden empty state, legacy state fallback, hidden panel, removal, settings persistence, popup hidden counts.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

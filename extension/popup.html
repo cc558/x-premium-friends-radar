@@ -19,13 +19,13 @@
         <input id="enabled" name="enabled" type="checkbox" role="switch" checked>
       </label>
       <label class="toggle-row" for="hide-followed-users">
-        <span><strong>隐藏已关注用户</strong><small>跳过已关注的账号，继续寻找其他人</small></span>
+        <span><strong>隐藏已关注用户</strong><small>符合条件的已关注账号仍计入推荐人数</small></span>
         <input id="hide-followed-users" name="hideFollowedUsers" type="checkbox" role="switch">
       </label>
       <div class="quantity">
         <label for="max-results">每次推荐人数</label>
         <input id="max-results" name="maxResults" type="number" min="1" max="20" step="1" value="20" required inputmode="numeric" aria-describedby="quantity-help">
-        <p id="quantity-help">1–20 人，默认 20 人。找到目标人数后停止；列表不足时显示已有结果。</p>
+        <p id="quantity-help">1–20 人，默认 20 人。找到目标人数后停止，包含被隐藏的已关注用户；列表不足时显示已有结果。</p>
       </div>
       <button id="save" type="submit" disabled>保存设置</button>
       <p id="feedback" role="status" aria-live="polite"></p>

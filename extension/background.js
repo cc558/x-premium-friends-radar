@@ -12,10 +12,15 @@ const ready = chrome.storage.session.get(SESSION_KEY).then((saved) => {
       const prefs = Core.normalizeSettings({maxResults: job.maxResults, hideFollowedUsers: job.hideFollowedUsers});
       job.maxResults = prefs.maxResults;
       job.hideFollowedUsers = prefs.hideFollowedUsers;
-      job.results = Array.isArray(job.results)
-        ? job.results.map((user) => Core.sanitizeUser(user)).filter((user) => user && (!job.hideFollowedUsers || !user.isFollowing)).slice(0, job.maxResults)
+      const results = Array.isArray(job.results)
+        ? job.results.map((user) => Core.sanitizeUser(user)).filter(Boolean).slice(0, job.maxResults)
         : [];
-      if (job.status === 'complete' && job.reason === 'target') job.message = `已找到 ${job.results.length} 位朋友。`;
+      // Keep quota progress separate from visible results, including after a
+      // worker restart. Older sessions can recover the count from their results.
+      const matched = Number.isSafeInteger(job.matched) && job.matched >= 0 ? job.matched : 0;
+      job.matched = Math.min(job.maxResults, Math.max(matched, results.length));
+      job.results = results.filter((user) => !job.hideFollowedUsers || !user.isFollowing);
+      if (job.status === 'complete' && job.reason === 'target') job.message = targetMessage(job);
     }
   }
 });
@@ -32,9 +37,10 @@ const scanJob = (tabId) => data.jobs.find((job) => active(job) && job.scanTabId 
 
 function state(job) {
   if (!job) return null;
-  const {handle, status, reason, message, results, scanned, skipped, maxResults, hideFollowedUsers, updatedAt} = job;
-  return {handle, status, reason, message, results, scanned, skipped, maxResults, hideFollowedUsers, updatedAt};
+  const {handle, status, reason, message, results, matched, scanned, skipped, maxResults, hideFollowedUsers, updatedAt} = job;
+  return {handle, status, reason, message, results, matched, scanned, skipped, maxResults, hideFollowedUsers, updatedAt};
 }
+const targetMessage = (job) => `已达到 ${job.maxResults} 人的推荐上限。`;
 async function notify(job) {
   job.updatedAt = Date.now();
   await persist();
@@ -124,7 +130,7 @@ async function start(profile, tabId, force) {
     id: crypto.randomUUID(), ownerTabId: tabId, scanTabId: null,
     handle: user.handle, profileId: user.id, maxResults: prefs.maxResults, hideFollowedUsers: prefs.hideFollowedUsers,
     status: 'queued', reason: null, message: '正在等待扫描…',
-    results: [], scanned: 0, skipped: 0, pages: 0,
+    results: [], matched: 0, scanned: 0, skipped: 0, pages: 0,
     seen: [], pageKeys: [], lastCursor: null, nonAdvancing: 0,
     updatedAt: Date.now(), deadline: null
   };
@@ -169,18 +175,20 @@ async function acceptPage(message, sender) {
   for (const user of users) {
     const identity = user.id || user.handle;
     if (seen.has(identity)) continue;
-    if (job.scanned >= LIMITS.users || job.results.length >= job.maxResults) break;
+    if (job.scanned >= LIMITS.users || job.matched >= job.maxResults) break;
     seen.add(identity);
     job.scanned += 1;
     if (user.followers === null || user.following === null) job.skipped += 1;
-    if (job.hideFollowedUsers && user.isFollowing === true) continue;
-    if (Core.matches(user)) job.results.push(user);
+    if (Core.matches(user)) {
+      job.matched += 1;
+      if (!job.hideFollowedUsers || user.isFollowing !== true) job.results.push(user);
+    }
   }
   job.seen = [...seen];
   job.nonAdvancing = seen.size === before || (cursor && cursor === job.lastCursor) ? job.nonAdvancing + 1 : 0;
   job.lastCursor = cursor;
-  if (job.results.length >= job.maxResults) {
-    await finish(job, 'complete', 'target', `已找到 ${job.maxResults} 位朋友。`);
+  if (job.matched >= job.maxResults) {
+    await finish(job, 'complete', 'target', targetMessage(job));
   } else if (page.exhausted === true) {
     await finish(job, 'complete', 'exhausted', '认证关注者已扫描完毕。');
   } else if (job.nonAdvancing >= 2) {
@@ -316,8 +324,8 @@ serial(async () => {
       if (!owner) data.jobs = data.jobs.filter((item) => item !== job);
       continue;
     }
-    if (job.results.length >= job.maxResults) {
-      await finish(job, 'complete', 'target', `已找到 ${job.maxResults} 位朋友。`);
+    if (job.matched >= job.maxResults) {
+      await finish(job, 'complete', 'target', targetMessage(job));
       continue;
     }
     if (job.status === 'scanning') {

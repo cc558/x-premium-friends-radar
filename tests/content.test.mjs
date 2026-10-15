@@ -20,7 +20,8 @@ function events() {
 }
 
 function content(respond) {
-  const state = {messages: [], panels: [], timers: [], scannerJobs: [], scannerEvents: [], scannerDestroyed: 0};
+  const state = {messages: [], panels: [], timers: [], scannerJobs: [], scannerEvents: [], scannerDestroyed: 0,
+    followingCreated: 0, followingEvents: [], followingRefreshes: 0, followingDestroyed: 0};
   const windowEvents = events();
   const runtimeEvents = events();
   const storageEvents = events();
@@ -56,6 +57,13 @@ function content(respond) {
       create(job) {
         state.scannerJobs.push(copy(job));
         return {accept: (value) => state.scannerEvents.push(copy(value)), destroy: () => { state.scannerDestroyed++; }};
+      },
+    },
+    BlueFriendsFollowing: {
+      create() {
+        state.followingCreated++;
+        return {accept: value => state.followingEvents.push(copy(value)),
+          refresh: () => { state.followingRefreshes++; }, destroy: () => { state.followingDestroyed++; }};
       },
     },
   });
@@ -156,8 +164,31 @@ test('scan tabs forward only bridge data to their assigned scanner and destroy i
   assert.equal(api.state.scannerEvents.length, 1);
   assert.equal(api.state.messages.filter((message) => message.type === 'PROFILE_VISIT').length, 0);
   assert.equal(api.state.panels.length, 0);
+  assert.equal(api.state.followingCreated, 0);
   api.windowEvents.emit('pagehide', {});
   assert.equal(api.state.scannerDestroyed, 1);
+});
+
+test('following list receives buffered bridge data even when automatic recommendations are off', async () => {
+  const contextReady = deferred();
+  const api = content(message => message.type === 'BF_CONTEXT' ? contextReady.promise : undefined);
+  const page = {type:'FOLLOWING_PAGE', handle:'alice', targetId:'42', status:200,
+    page:{hasTimeline:true, users:[profile('bob', {isFollowedBy:false})]}};
+  await api.bridge(page);
+  contextReady.resolve({ok:true, role:'profile', settings:{enabled:false}});
+  await flush();
+  assert.equal(api.state.followingCreated, 1);
+  assert.deepEqual(api.state.followingEvents, [{source:'blue-friends-radar', ...page}]);
+  await api.bridge(page, {source:{}});
+  await api.bridge(page, {origin:'https://example.com'});
+  assert.equal(api.state.followingEvents.length, 1);
+  await api.route('alice/following');
+  assert.ok(api.state.followingRefreshes >= 2);
+  assert.equal(api.state.panels.length, 0);
+  api.windowEvents.emit('pagehide', {persisted:true});
+  assert.equal(api.state.followingDestroyed, 0, 'A cached document must retain its controller for browser back/forward.');
+  api.windowEvents.emit('pagehide', {});
+  assert.equal(api.state.followingDestroyed, 1);
 });
 
 test('retry and stop actions send explicit worker commands and show resulting state', async () => {

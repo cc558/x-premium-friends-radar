@@ -4,6 +4,7 @@
   const profiles = new Map();
   let context = null;
   let scanner = null;
+  let following = null;
   let settings = Core.DEFAULT_SETTINGS;
   let currentHandle = null;
   let lastPath = null;
@@ -55,6 +56,7 @@
   }
   async function route(force = false) {
     if (context?.role !== 'profile') return;
+    following?.refresh();
     const path = location.pathname;
     if (path === lastPath && !force) {
       if (latestState) panel?.mount();
@@ -80,6 +82,7 @@
   function consume(event) {
     if (!context) { if (buffered.length >= 30) buffered.shift(); buffered.push(event); return; }
     if (context.role === 'scan') { scanner?.accept(event); return; }
+    if (event.type === 'FOLLOWING_PAGE') { following?.accept(event); return; }
     if (event.type === 'PROFILE_DATA') {
       const profile = Core.sanitizeUser(event.profile);
       if (!profile) return;
@@ -92,7 +95,7 @@
   // Install before the ready handshake so fast first responses cannot be lost.
   window.addEventListener('message', (event) => {
     if (event.source !== window || event.origin !== location.origin || event.data?.source !== 'blue-friends-radar') return;
-    if (!['PROFILE_DATA', 'VERIFIED_PAGE'].includes(event.data.type)) return;
+    if (!['PROFILE_DATA', 'VERIFIED_PAGE', 'FOLLOWING_PAGE'].includes(event.data.type)) return;
     consume(event.data);
   });
   window.postMessage({source: 'blue-friends-controller', type: 'BRIDGE_READY'}, location.origin);
@@ -109,12 +112,18 @@
     context = reply;
     settings = Core.normalizeSettings(reply.settings);
     if (reply.role === 'scan') scanner = globalThis.BlueFriendsScanner.create(reply.job);
-    else await route();
+    else {
+      following = globalThis.BlueFriendsFollowing.create();
+      await route();
+    }
     for (const event of buffered.splice(0)) consume(event);
     if (reply.role === 'profile') {
       setInterval(() => { void route(); }, 600);
       document.addEventListener('visibilitychange', () => { if (!document.hidden) void route(); });
     }
   }).catch(() => {});
-  window.addEventListener('pagehide', () => scanner?.destroy());
+  window.addEventListener('pagehide', event => {
+    scanner?.destroy();
+    if (!event.persisted) following?.destroy();
+  });
 })();

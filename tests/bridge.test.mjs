@@ -12,9 +12,10 @@ const profile = id => ({ data: { user: { result: user(id) } } });
 const verified = { data: { user: { result: { timeline_v2: { timeline: { instructions: [{ type: "TimelineAddEntries", entries: [{ entryId: "user-123", content: { itemContent: { __typename: "TimelineUser", user_results: { result: user() } } } }] }] } } } } } };
 const graphqlURL = (operation, variables = {}) => `https://x.com/i/api/graphql/query-id/${operation}?variables=${encodeURIComponent(JSON.stringify(variables))}`;
 
-function runtime({ href = "https://x.com/owner/verified_followers", payload = verified, status = 200 } = {}) {
+function runtime({ href = "https://x.com/owner/verified_followers", payload = verified, status = 200, viewerHandles = [] } = {}) {
   const posts = [];
   const fetchCalls = [];
+  const profileLinks = [...viewerHandles];
   const windowListeners = new Map();
   const response = { status, clone: () => ({ json: () => Promise.resolve(payload) }) };
   const fetchPromise = Promise.resolve(response);
@@ -39,6 +40,8 @@ function runtime({ href = "https://x.com/owner/verified_followers", payload = ve
   }
   const sandbox = {
     URL, location: new URL(href), XMLHttpRequest: XHR,
+    document: { querySelectorAll: selector => selector === 'a[data-testid="AppTabBar_Profile_Link"][href]'
+      ? profileLinks.map(href => ({ getAttribute: () => href, secret: "private-dom" })) : [] },
     fetch: function (...args) { fetchCalls.push({ receiver: this, args }); return fetchPromise; },
     addEventListener: (type, listener) => windowListeners.set(type, listener),
     postMessage: (event, origin) => posts.push({ event: plain(event), origin }),
@@ -48,7 +51,7 @@ function runtime({ href = "https://x.com/owner/verified_followers", payload = ve
   vm.runInContext(coreSource, context);
   vm.runInContext(bridgeSource, context);
   const ready = overrides => windowListeners.get("message")?.({ source: vm.runInContext("window", context), origin: sandbox.location.origin, data: { source: "blue-friends-controller", type: "BRIDGE_READY" }, ...overrides });
-  return { context, sandbox, posts, fetchCalls, fetchPromise, response, ready, XHR };
+  return { context, sandbox, posts, fetchCalls, fetchPromise, response, ready, XHR, profileLinks };
 }
 
 test("fetch observer preserves the exact promise, call receiver, args, and response body", async () => {
@@ -67,13 +70,14 @@ test("fetch observer preserves the exact promise, call receiver, args, and respo
   const posted = runtimeState.posts[0];
   assert.equal(posted.origin, "https://x.com");
   assert.equal(posted.event.type, "PROFILE_DATA");
+  assert.equal(Object.hasOwn(posted.event, "requestViewerHandle"), false);
   assert.equal(posted.event.profile.handle, "friend123");
   const serialized = JSON.stringify(posted.event);
   assert.equal(serialized.includes("secret-token"), false);
   assert.equal(serialized.includes("never forward"), false);
 });
 
-test("only the four allowed X GraphQL operations are observed", async () => {
+test("only the five allowed X GraphQL operations are observed", async () => {
   const state = runtime();
   for (const url of [
     "https://example.com/i/api/graphql/id/VerifiedFollowers",
@@ -89,7 +93,7 @@ test("only the four allowed X GraphQL operations are observed", async () => {
   await settle();
   assert.equal(state.posts.length, 1);
   assert.deepEqual(state.posts[0].event, {
-    source: "blue-friends-radar", type: "VERIFIED_PAGE", page: { users: [{ id: "123", handle: "friend123", name: "好友123", avatar: "https://pbs.twimg.com/avatar.jpg", isBlueVerified: true, isFollowing: false, followers: 100, following: 90 }], nextCursor: null, exhausted: true, hasTimeline: true, error: null },
+    source: "blue-friends-radar", type: "VERIFIED_PAGE", page: { users: [{ id: "123", handle: "friend123", name: "好友123", avatar: "https://pbs.twimg.com/avatar.jpg", isBlueVerified: true, isFollowing: false, isFollowedBy: null, followers: 100, following: 90 }], nextCursor: null, exhausted: true, hasTimeline: true, error: null },
     targetId: "123", requestCursor: "cursor-1", handle: "owner", status: 200,
   });
 });
@@ -102,8 +106,118 @@ test("verified-page observations and replay retain the viewer follow relationshi
   state.context.fetch(graphqlURL("BlueVerifiedFollowers", { userId: "123" }));
   await settle();
   assert.equal(state.posts[0].event.page.users[0].isFollowing, true);
+  assert.equal(state.posts[0].event.page.users[0].isFollowedBy, false);
   state.ready();
   assert.equal(state.posts[1].event.page.users[0].isFollowing, true);
+  assert.equal(state.posts[1].event.page.users[0].isFollowedBy, false);
+});
+
+test("Following pages snapshot the route and request metadata and replay only normalized data", async () => {
+  const payload = plain(verified);
+  const raw = payload.data.user.result.timeline_v2.timeline.instructions[0].entries[0].content.itemContent.user_results.result;
+  raw.relationship_perspectives = { followed_by: false, secret: "private-relationship" };
+  raw.legacy.followed_by = true;
+  payload.private = "private-payload";
+  const state = runtime({ href: "https://x.com/Owner_Name/following/?lang=en", payload, status: 206 });
+  state.context.fetch(graphqlURL("Following", { userId: "456", cursor: "next-following", secret: "private-variable" }), { headers: { authorization: "private-token" } });
+  state.sandbox.location = new URL("https://x.com/another/following");
+  await settle();
+  assert.equal(state.posts.length, 1);
+  const event = state.posts[0].event;
+  assert.equal(event.type, "FOLLOWING_PAGE");
+  assert.equal(event.handle, "owner_name");
+  assert.equal(event.targetId, "456");
+  assert.equal(event.requestCursor, "next-following");
+  assert.equal(event.status, 206);
+  assert.equal(event.requestViewerHandle, null);
+  assert.equal(event.page.users[0].isFollowedBy, false);
+  assert.equal(JSON.stringify(event).includes("private-"), false);
+  assert.equal(JSON.stringify(event).includes("never forward"), false);
+  state.ready();
+  assert.deepEqual(state.posts[1].event, event);
+});
+
+test("Following requests snapshot a unique sidebar viewer before navigation and exclude unrelated DOM data", async () => {
+  const state = runtime({ href: "https://x.com/owner/following", viewerHandles: ["/Old_Viewer?private=private-query", "https://x.com/OLD_VIEWER"] });
+  state.context.fetch(graphqlURL("Following", { userId: "123" }));
+  state.profileLinks.splice(0, state.profileLinks.length, "/New_Viewer");
+  state.sandbox.location = new URL("https://x.com/new_viewer/following");
+  await settle();
+  const event = state.posts[0].event;
+  assert.equal(event.handle, "owner");
+  assert.equal(event.requestViewerHandle, "old_viewer");
+  assert.equal(JSON.stringify(event).includes("private-"), false);
+  state.ready();
+  assert.deepEqual(state.posts[1].event, event);
+});
+
+test("Following viewer snapshots remain unknown without a unique valid sidebar profile", async () => {
+  for (const viewerHandles of [[], ["/alice", "/bob"], ["https://evil.com/alice"], ["/home"], ["/alice/following"], ["invalid handle"]]) {
+    const state = runtime({ href: "https://x.com/owner/following", viewerHandles });
+    state.context.fetch(graphqlURL("Following", { userId: "123" }));
+    await settle();
+    assert.equal(state.posts[0].event.requestViewerHandle, null, JSON.stringify(viewerHandles));
+  }
+  const noDocument = runtime({ href: "https://x.com/owner/following" });
+  delete noDocument.sandbox.document;
+  noDocument.context.fetch(graphqlURL("Following", { userId: "123" }));
+  await settle();
+  assert.equal(noDocument.posts[0].event.requestViewerHandle, null);
+});
+
+test("Following observation obeys the strict host and operation path allowlist", async () => {
+  const state = runtime({ href: "https://x.com/owner/following" });
+  for (const url of [
+    "https://example.com/i/api/graphql/id/Following",
+    "https://x.com.evil.com/i/api/graphql/id/Following",
+    "https://user:secret@x.com/i/api/graphql/id/Following",
+    "http://x.com/i/api/graphql/id/Following",
+    "https://x.com/api/graphql/id/Following",
+    "https://x.com/i/api/graphql/id/Following/extra",
+    "https://x.com/i/api/graphql/id/following",
+    "https://x.com/i/api/graphql/id/FollowingExtra",
+    "https://x.com/i/api/graphql/id/Followers?operationName=Following",
+  ]) state.context.fetch(url);
+  await settle();
+  assert.equal(state.posts.length, 0);
+  for (const host of ["x.com", "www.x.com", "twitter.com", "www.twitter.com"]) {
+    state.context.fetch(`https://${host}/i/api/graphql/id/Following/?variables=${encodeURIComponent('{"userId":"123"}')}`);
+  }
+  await settle();
+  assert.equal(state.posts.length, 4);
+  assert.equal(state.posts.every(({ event }) => event.type === "FOLLOWING_PAGE" && event.handle === "owner"), true);
+});
+
+test("Following route capture rejects unrelated routes and malformed handles or variables", async () => {
+  for (const path of ["/owner", "/owner/verified_followers", "/owner/following/extra", "/home/following", "/longlonglonglonglong/following", "/%6fwner/following"]) {
+    const state = runtime({ href: `https://x.com${path}` });
+    state.context.fetch(graphqlURL("Following", { userId: "private-id", cursor: { secret: "private-cursor" } }));
+    await settle();
+    assert.equal(state.posts[0].event.handle, null, path);
+    assert.equal(state.posts[0].event.targetId, null);
+    assert.equal(state.posts[0].event.requestCursor, null);
+    assert.equal(JSON.stringify(state.posts[0].event).includes("private-"), false);
+  }
+  const state = runtime({ href: "https://x.com/owner/following" });
+  state.context.fetch(graphqlURL("VerifiedFollowers", { userId: "123" }));
+  await settle();
+  assert.equal(state.posts[0].event.type, "VERIFIED_PAGE");
+  assert.equal(state.posts[0].event.handle, null, "Following routes must not become verified-follower routes.");
+});
+
+test("XHR Following pages retain the route at open and unknown follows-you state", () => {
+  const state = runtime({ href: "https://twitter.com/Owner/following", viewerHandles: ["/Owner"] });
+  const xhr = new state.XHR();
+  xhr.open("GET", graphqlURL("Following", { userId: "789", cursor: "xhr-next" }));
+  state.sandbox.location = new URL("https://twitter.com/other/following");
+  state.profileLinks.splice(0, state.profileLinks.length, "/Other");
+  xhr.send();
+  assert.equal(state.posts[0].event.type, "FOLLOWING_PAGE");
+  assert.equal(state.posts[0].event.handle, "owner");
+  assert.equal(state.posts[0].event.requestViewerHandle, "owner");
+  assert.equal(state.posts[0].event.targetId, "789");
+  assert.equal(state.posts[0].event.requestCursor, "xhr-next");
+  assert.equal(state.posts[0].event.page.users[0].isFollowedBy, null);
 });
 
 test("same-origin controller readiness replays buffered events and ignores spoofed origins", async () => {

@@ -11,11 +11,23 @@
   const recentEvents = [];
   const profileOperations = new Set(["UserByScreenName", "UserByRestId"]);
 
-  function followersHandle() {
-    const match = /^\/([^/]+)\/verified_followers\/?$/.exec(location.pathname);
-    if (!match) return null;
+  function listHandle(section) {
+    const match = /^\/([^/]+)\/(verified_followers|following)\/?$/.exec(location.pathname);
+    if (match?.[2] !== section) return null;
     const handle = core.normalizeHandle(match[1]);
     return handle && core.profileHandle(`${location.origin}/${handle}`) ? handle : null;
+  }
+
+  function viewerHandle() {
+    if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") return null;
+    const handles = new Set();
+    for (const link of document.querySelectorAll('a[data-testid="AppTabBar_Profile_Link"][href]')) {
+      try {
+        const handle = core.profileHandle(new URL(link.getAttribute("href"), location.href).href);
+        if (handle) handles.add(handle);
+      } catch { /* Ignore malformed or unrelated sidebar links. */ }
+    }
+    return handles.size === 1 ? [...handles][0] : null;
   }
 
   function requestInfo(input) {
@@ -23,13 +35,17 @@
       const value = typeof input === "string" || input instanceof URL ? String(input) : input?.url;
       const url = new URL(value, location.href);
       if (url.protocol !== "https:" || !allowedHosts.has(url.hostname) || url.username || url.password) return null;
-      const match = /^\/i\/api\/graphql\/[^/]+\/(UserByScreenName|UserByRestId|BlueVerifiedFollowers|VerifiedFollowers)\/?$/.exec(url.pathname);
+      const match = /^\/i\/api\/graphql\/[^/]+\/(UserByScreenName|UserByRestId|BlueVerifiedFollowers|VerifiedFollowers|Following)\/?$/.exec(url.pathname);
       if (!match) return null;
       let variables = {};
       try { variables = JSON.parse(url.searchParams.get("variables") || "{}"); } catch { /* Unsupported variables are left empty. */ }
       const targetId = typeof variables?.userId === "string" && /^\d{1,30}$/.test(variables.userId) ? variables.userId : null;
       const requestCursor = typeof variables?.cursor === "string" && variables.cursor.length <= 4096 && variables.cursor ? variables.cursor : null;
-      return { operation: match[1], targetId, requestCursor, handle: followersHandle() };
+      return {
+        operation: match[1], targetId, requestCursor,
+        handle: listHandle(match[1] === "Following" ? "following" : "verified_followers"),
+        ...(match[1] === "Following" ? { requestViewerHandle: viewerHandle() } : {}),
+      };
     } catch {
       return null;
     }
@@ -52,11 +68,12 @@
       } else {
         post({
           source,
-          type: "VERIFIED_PAGE",
-          page: core.parseVerifiedPage(payload),
+          type: info.operation === "Following" ? "FOLLOWING_PAGE" : "VERIFIED_PAGE",
+          page: info.operation === "Following" ? core.parseFollowingPage(payload) : core.parseVerifiedPage(payload),
           targetId: info.targetId,
           requestCursor: info.requestCursor,
           handle: info.handle,
+          ...(info.operation === "Following" ? { requestViewerHandle: info.requestViewerHandle } : {}),
           status: Number.isInteger(status) && status >= 0 && status <= 599 ? status : 0,
         });
       }
@@ -72,8 +89,8 @@
   if (typeof globalThis.fetch === "function") {
     const nativeFetch = globalThis.fetch;
     globalThis.fetch = function (...args) {
-      const promise = nativeFetch.apply(this, args);
       const info = requestInfo(args[0]);
+      const promise = nativeFetch.apply(this, args);
       if (info) {
         // Return the original promise; JSON parsing uses a cloned response asynchronously.
         try {

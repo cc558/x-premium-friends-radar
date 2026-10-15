@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "推荐蓝朋友 · X Friends Radar",
-  "version": "0.2.0",
-  "description": "浏览 X 蓝标主页时，在认证关注者中寻找正在关注数大于关注者数 80% 的朋友。",
+  "version": "0.3.0",
+  "description": "浏览 X 蓝标主页时，在认证关注者中寻找关注比例合适的朋友；查看自己的正在关注列表时，高亮并筛选未关注你的用户。",
   "minimum_chrome_version": "120",
   "permissions": ["storage", "alarms"],
   "icons": {"16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png"},
@@ -18,7 +18,7 @@
     },
     {
       "matches": ["https://x.com/*", "https://twitter.com/*"],
-      "js": ["shared/core.js", "view.js", "scanner.js", "content.js"],
+      "js": ["shared/core.js", "view.js", "following.js", "scanner.js", "content.js"],
       "run_at": "document_start",
       "world": "ISOLATED"
     }
